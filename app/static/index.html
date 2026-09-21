@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Upload Notifier</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='22' height='16' rx='5' fill='%23FF0033'/%3E%3Cpath d='M11 10.5v7l6-3.5z' fill='white'/%3E%3Ccircle cx='26' cy='24' r='5' fill='%235865F2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css?v=__VERSION__">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="2" y="6" width="22" height="16" rx="5" fill="#FF0033"/>
+        <path d="M11 10.5v7l6-3.5z" fill="#fff"/>
+        <circle cx="26" cy="24" r="5" fill="#5865F2"/>
+      </svg>
+      <div>
+        <h1>Upload Notifier</h1>
+        <p class="brand-sub">New YouTube uploads, posted to Discord</p>
+      </div>
+    </div>
+    <div class="topbar-status" id="topbar-status">
+      <span class="pill" id="pill-bot"><span class="dot"></span><span class="pill-text">Bot</span></span>
+      <span class="pill" id="pill-check"><span class="dot"></span><span class="pill-text">Checking</span></span>
+      <button class="btn" id="btn-check-all" type="button">Check all now</button>
+    </div>
+  </header>
+
+  <div class="setup-banner" id="setup-banner" hidden>
+    <div>
+      <strong id="setup-title">Connect a Discord bot to start posting</strong>
+      <p id="setup-text">Paste your bot token in the Discord bot panel. Channels you add are watched either way, and posting starts once the bot is online.</p>
+    </div>
+    <button class="btn btn-primary" id="setup-go" type="button">Set up the bot</button>
+  </div>
+
+  <main class="layout">
+    <section class="channels" aria-labelledby="channels-heading">
+      <div class="channels-head">
+        <h2 id="channels-heading">YouTube channels</h2>
+        <span class="count" id="channel-count"></span>
+      </div>
+
+      <form class="add-form" id="add-form" autocomplete="off">
+        <label class="sr-only" for="add-input">YouTube channel link, @handle or channel ID</label>
+        <input id="add-input" type="text" placeholder="Paste a channel link, @handle or channel ID" required>
+        <button class="btn btn-primary" id="add-btn" type="submit">Add channel</button>
+      </form>
+      <p class="form-error" id="add-error" role="alert" hidden></p>
+
+      <div class="filter-row" id="filter-row" hidden>
+        <label class="sr-only" for="filter-input">Filter channels</label>
+        <input id="filter-input" type="search" placeholder="Filter channels">
+      </div>
+
+      <ul class="ch-list" id="ch-list" aria-live="polite"></ul>
+      <div class="empty" id="empty" hidden>
+        <p class="empty-title">No channels yet</p>
+        <p>Paste a YouTube channel link above to start watching it. Videos already on the channel won't be announced, only new uploads.</p>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel" id="panel-discord" aria-labelledby="discord-heading">
+        <h2 id="discord-heading">Discord bot</h2>
+        <p class="bot-line" id="bot-line"><span class="dot"></span><span id="bot-line-text">Not set up</span></p>
+
+        <form class="stack" id="token-form" autocomplete="off">
+          <label for="token-input">Bot token</label>
+          <div class="inline">
+            <input id="token-input" type="password" placeholder="Paste your bot token" spellcheck="false">
+            <button class="btn" type="submit">Save token</button>
+          </div>
+          <p class="hint" id="token-hint">The token is stored in this app's data folder and never shown again.</p>
+        </form>
+
+        <a class="btn btn-block" id="invite-link" href="#" target="_blank" rel="noopener" hidden>Add the bot to a server</a>
+
+        <form class="stack" id="default-channel-form">
+          <label for="default-channel">Post new videos in</label>
+          <div id="default-channel-slot"></div>
+          <div class="inline">
+            <button class="btn" type="submit">Save channel</button>
+            <button class="btn btn-quiet" type="button" id="btn-test-discord">Send test message</button>
+          </div>
+        </form>
+
+        <form class="stack" id="default-message-form">
+          <label for="default-message">Default message</label>
+          <textarea id="default-message" rows="2" placeholder="Used for channels without their own message"></textarea>
+          <p class="hint">Optional. <code>{channel}</code>, <code>{title}</code> and <code>{url}</code> are filled in for each video.</p>
+          <div><button class="btn" type="submit">Save message</button></div>
+        </form>
+
+        <details class="help">
+          <summary>How to create a bot</summary>
+          <ol>
+            <li>Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Discord Developer Portal</a> and choose New Application.</li>
+            <li>On the Bot page, choose Reset Token and copy it. Paste it above.</li>
+            <li>When the bot shows as online here, use “Add the bot to a server”.</li>
+            <li>Pick the channel it should post in, then send a test message.</li>
+          </ol>
+          <p class="hint">No privileged intents are needed. To paste a channel ID instead of picking one, turn on Developer Mode in Discord (Settings, Advanced) and right-click the channel.</p>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="checking-heading">
+        <h2 id="checking-heading">Checking for uploads</h2>
+        <form class="stack" id="checking-form">
+          <div class="field-pair">
+            <div>
+              <label for="poll-minutes">Check every</label>
+              <div class="unit"><input id="poll-minutes" type="number" min="1" max="1440" step="1" required><span>minutes</span></div>
+            </div>
+            <div>
+              <label for="max-age">Skip videos older than</label>
+              <div class="unit"><input id="max-age" type="number" min="0" max="8760" step="1" required><span>hours</span></div>
+            </div>
+          </div>
+          <p class="hint">Reads each channel's public YouTube feed, so no API key or quota is involved. Set the age limit to 0 to never skip older videos.</p>
+          <div><button class="btn" type="submit">Save</button></div>
+        </form>
+
+        <details class="help" id="websub-details">
+          <summary>Instant notifications</summary>
+          <p>YouTube can push new uploads here within seconds instead of waiting for the next check. This only works if YouTube can reach this app from the internet.</p>
+          <p>Forward just the <code>/websub/</code> path through a reverse proxy or tunnel (for example Cloudflare Tunnel), then enter the public address below.</p>
+          <form class="stack" id="websub-form" autocomplete="off">
+            <label for="public-url">Public address</label>
+            <div class="inline">
+              <input id="public-url" type="url" placeholder="https://yt.example.com">
+              <button class="btn" type="submit">Save</button>
+            </div>
+            <p class="hint" id="websub-status"></p>
+          </form>
+        </details>
+
+        <details class="help">
+          <summary>YouTube API key (optional)</summary>
+          <p>Only used to look up @handles when adding channels, as a fallback if reading the channel page fails. Everything works without it.</p>
+          <form class="stack" id="apikey-form" autocomplete="off">
+            <label for="apikey-input">API key</label>
+            <div class="inline">
+              <input id="apikey-input" type="password" placeholder="Paste a YouTube Data API v3 key" spellcheck="false">
+              <button class="btn" type="submit">Save</button>
+            </div>
+            <p class="hint" id="apikey-hint"></p>
+            <div><button class="btn btn-quiet" type="button" id="apikey-clear" hidden>Remove key</button></div>
+          </form>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="activity-heading">
+        <h2 id="activity-heading">Activity</h2>
+        <ol class="activity" id="activity"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">Upload Notifier <span id="version">__VERSION__</span></footer>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <template id="tpl-row">
+    <li class="ch">
+      <div class="ch-main">
+        <span class="ch-avatar" aria-hidden="true"></span>
+        <div class="ch-text">
+          <a class="ch-name" target="_blank" rel="noopener"></a>
+          <p class="ch-sub"></p>
+        </div>
+        <span class="ch-state"><span class="dot"></span><span class="ch-state-text"></span></span>
+        <label class="switch" title="Post new uploads from this channel">
+          <input type="checkbox" role="switch" class="ch-toggle">
+          <span class="switch-track" aria-hidden="true"></span>
+        </label>
+        <button class="ch-expand" type="button" aria-expanded="false">
+          <span class="sr-only">Options for this channel</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="ch-options" hidden>
+        <form class="ch-form">
+          <label class="ch-label">Message before the link</label>
+          <textarea class="ch-message" rows="2" maxlength="1800"></textarea>
+          <p class="hint">Optional. <code>{channel}</code>, <code>{title}</code> and <code>{url}</code> are filled in. Mention a role with <code>&lt;@&amp;role id&gt;</code> or use <code>@everyone</code>.</p>
+
+          <label class="ch-label">Post in</label>
+          <div class="ch-picker-slot"></div>
+
+          <label class="check-line">
+            <span class="switch switch-small">
+              <input type="checkbox" role="switch" class="ch-shorts">
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+            <span>Include Shorts</span>
+          </label>
+
+          <div class="ch-actions">
+            <button class="btn btn-primary ch-save" type="submit" disabled>Save changes</button>
+            <button class="btn ch-test" type="button">Send test post</button>
+            <button class="btn btn-quiet ch-check" type="button">Check now</button>
+            <button class="btn btn-danger ch-remove" type="button">Remove</button>
+          </div>
+        </form>
+        <figure class="preview">
+          <figcaption>Preview in Discord</figcaption>
+          <div class="dc">
+            <span class="dc-avatar"></span>
+            <div class="dc-body">
+              <p class="dc-head"><span class="dc-name"></span><span class="dc-tag">APP</span><span class="dc-time">Today</span></p>
+              <div class="dc-text"></div>
+              <div class="dc-embed">
+                <p class="dc-embed-site">YouTube</p>
+                <p class="dc-embed-author"></p>
+                <p class="dc-embed-title"></p>
+                <div class="dc-thumb"><span class="dc-play" aria-hidden="true"></span></div>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+    </li>
+  </template>
+
+  <script src="/static/app.js?v=__VERSION__"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# For TrueNAS SCALE: Apps > Discover Apps > ⋮ > Install via YAML, then paste this.
+# Replace YOUR_GITHUB_USERNAME and the dataset path first.
+services:
+  yt-discord-notifier:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/yt-discord-notifier:latest
+    container_name: yt-discord-notifier
+    restart: unless-stopped
+    ports:
+      - "25599:25599"
+    volumes:
+      # A dataset owned by the "apps" user (568). Holds the database with your settings.
+      - /mnt/YOUR_POOL/apps/yt-discord-notifier:/data
+    environment:
+      TZ: America/New_York
+      # Uncomment to require a login for the web interface (user "admin"):
+      # ADMIN_PASSWORD: change-me
