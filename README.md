@@ -10,30 +10,6 @@ It can also receive **instant notifications**: YouTube pushes new uploads to the
 
 When you add a channel, the videos already on it are recorded silently. Only uploads that appear after that are announced, and each video is posted once.
 
----
-
-## 1. Publish the image from your GitHub account
-
-This repository contains a GitHub Actions workflow that builds the Docker image and publishes it to the GitHub Container Registry each time you push to `main`.
-
-1. On GitHub, create a new repository named `yt-discord-notifier`. Leave it empty (no README or license). Public is simplest; see step 4 if you make it private.
-2. Push these files to it from the folder that contains this README:
-
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/YOUR_GITHUB_USERNAME/yt-discord-notifier.git
-   git push -u origin main
-   ```
-
-   If you would rather upload through the GitHub website, make sure the hidden `.github/workflows/docker-publish.yml` file comes along; without it nothing gets built. If it goes missing, use **Add file → Create new file**, type `.github/workflows/docker-publish.yml` as the name, and paste its contents.
-3. Open the **Actions** tab. The "Build and publish Docker image" run takes a few minutes. When it turns green, the image is at `ghcr.io/YOUR_GITHUB_USERNAME/yt-discord-notifier:latest`, built for both `amd64` and `arm64`.
-4. On your GitHub profile, open **Packages → yt-discord-notifier → Package settings**. If the visibility is Private, change it to Public so TrueNAS can download it without a login. (To keep it private instead, create a GitHub personal access token with the `read:packages` scope and add it in TrueNAS under **Apps → Configuration → Manage Container Image Registries** for `ghcr.io`.)
-
-To release a numbered version as well as `latest`, push a tag such as `v1.0.0`.
-
 ## 2. Install on TrueNAS SCALE
 
 These steps are for TrueNAS SCALE 24.10 (Electric Eel) or newer, which runs apps with Docker.
@@ -47,10 +23,6 @@ These steps are for TrueNAS SCALE 24.10 (Electric Eel) or newer, which runs apps
 To require a login for the web page, uncomment `ADMIN_PASSWORD` in the YAML and set a password. The username is `admin`.
 
 If you prefer the **Custom App** form over YAML, the settings are: image `ghcr.io/YOUR_GITHUB_USERNAME/yt-discord-notifier`, tag `latest`, port `25599` → `25599`, a host-path volume from your dataset to `/data`, and user/group `568`.
-
-### Updating
-
-Push your changes to GitHub and wait for the Actions run to finish. TrueNAS then offers an update for the app, which pulls the new `latest` image. Your settings live in the dataset and are kept.
 
 ## 3. First-time setup in the web interface
 
