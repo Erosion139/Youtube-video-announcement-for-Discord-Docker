@@ -1,4 +1,4 @@
-# YouTube → Discord Notifier
+# YouTube → Discord Notifier (this is built with claude by the way if you couldn't tell)
 
 A small Docker app that watches YouTube channels and posts each new upload to Discord through your own bot. Everything is set up from a web page on port **25599**: the bot token, the Discord channel to post in, and the list of YouTube channels, each with its own on/off switch and optional message (for example, `Duckman uploaded a video! QUACK!`).
 
