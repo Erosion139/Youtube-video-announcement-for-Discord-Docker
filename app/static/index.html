@@ -118,8 +118,13 @@
               <label for="max-age">Skip videos older than</label>
               <div class="unit"><input id="max-age" type="number" min="0" max="8760" step="1" required><span>hours</span></div>
             </div>
+            <div class="wide">
+              <label for="request-gap">Wait between channels</label>
+              <div class="unit"><input id="request-gap" type="number" min="0" max="300" step="1" required><span>seconds</span></div>
+            </div>
           </div>
-          <p class="hint">Reads each channel's public YouTube feed, so no API key or quota is involved. Set the age limit to 0 to never skip older videos.</p>
+          <p class="hint" id="pass-estimate"></p>
+          <p class="hint">Reads each channel's public YouTube feed, so no API key or quota is involved. Set the age limit to 0 to never skip older videos. Channels are checked one at a time; raise the wait if YouTube starts refusing requests.</p>
           <div><button class="btn" type="submit">Save</button></div>
         </form>
 

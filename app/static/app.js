@@ -254,6 +254,34 @@ function renderStatus() {
   for (const row of rows.values()) row.updatePreview();
 }
 
+function spellDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)} seconds`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = (minutes / 60).toFixed(1).replace(/\.0$/, "");
+  return `${hours} hour${hours === "1" ? "" : "s"}`;
+}
+
+/* Channels are checked one after another, so the gap decides how long a pass takes. */
+function updatePassEstimate() {
+  const note = $("#pass-estimate");
+  const field = $("#request-gap");
+  if (!note || !field || field.value === "") return;   // settings not loaded yet
+  const gap = Math.max(0, parseFloat(field.value) || 0);
+  const count = state.channels.filter((c) => c.enabled).length;
+  if (!count) {
+    note.textContent = "";
+    return;
+  }
+  const passSeconds = gap * Math.max(0, count - 1);
+  const interval = (parseInt($("#poll-minutes").value, 10) || 0) * 60;
+  let text = `${count} channel${count === 1 ? "" : "s"} switched on, so one pass through them all takes about ${spellDuration(passSeconds)}.`;
+  if (interval && passSeconds > interval) {
+    text += " That is longer than the interval above, so passes will follow one another without a break.";
+  }
+  note.textContent = text;
+}
+
 function renderSettings() {
   const s = state.settings;
   if (!s) return;
@@ -270,6 +298,8 @@ function renderSettings() {
   $("#default-message").value = s.default_message;
   $("#poll-minutes").value = Math.round(s.poll_interval / 60);
   $("#max-age").value = s.max_age_hours;
+  $("#request-gap").value = Math.round(s.request_gap ?? 5);
+  updatePassEstimate();
   $("#public-url").value = s.public_url;
   if (s.public_url) $("#websub-details").open = true;
   $("#apikey-hint").textContent = s.youtube_api_key_set ? `A key is saved (${s.youtube_api_key_hint}).` : "No key saved.";
@@ -539,6 +569,7 @@ function renderChannels() {
   $("#empty").hidden = state.channels.length > 0;
   list.hidden = state.channels.length === 0;
   $("#filter-row").hidden = state.channels.length <= 6;
+  updatePassEstimate();
 }
 
 async function refreshChannels() {
@@ -659,8 +690,16 @@ function wire() {
     event.preventDefault();
     const minutes = parseInt($("#poll-minutes").value, 10);
     const hours = parseInt($("#max-age").value, 10);
-    await saveSettings({ poll_interval: minutes * 60, max_age_hours: hours }, event.submitter, "Checking settings saved");
+    const gap = parseInt($("#request-gap").value, 10);
+    await saveSettings(
+      { poll_interval: minutes * 60, max_age_hours: hours, request_gap: gap },
+      event.submitter,
+      "Checking settings saved",
+    );
   });
+
+  $("#request-gap").addEventListener("input", updatePassEstimate);
+  $("#poll-minutes").addEventListener("input", updatePassEstimate);
 
   $("#websub-form").addEventListener("submit", async (event) => {
     event.preventDefault();

@@ -146,6 +146,7 @@ def settings_json(ctx) -> dict:
         "discord_channel_id": s["discord_channel_id"],
         "default_message": s["default_message"],
         "poll_interval": int(s["poll_interval"] or 300),
+        "request_gap": ctx.notifier.request_gap(),
         "max_age_hours": int(s["max_age_hours"] or 0),
         "youtube_api_key_set": bool(s["youtube_api_key"]),
         "youtube_api_key_hint": mask(s["youtube_api_key"]),
@@ -239,6 +240,15 @@ async def put_settings(request):
         if not 60 <= interval <= 86400:
             raise ApiError("Check every 1 minute at the most, and at least once a day.")
         updates["poll_interval"] = str(interval)
+
+    if "request_gap" in data:
+        try:
+            gap = float(data["request_gap"])
+        except (TypeError, ValueError) as exc:
+            raise ApiError("The wait between channels must be a number of seconds.") from exc
+        if not 0 <= gap <= 300:
+            raise ApiError("The wait between channels must be between 0 and 300 seconds.")
+        updates["request_gap"] = str(int(gap))
 
     if "max_age_hours" in data:
         try:

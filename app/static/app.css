@@ -359,6 +359,7 @@ label { font-weight: 600; font-size: 0.87rem; }
 .bot-line.is-bad { color: var(--danger); }
 .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field-pair > div { display: flex; flex-direction: column; justify-content: space-between; gap: 6px; }
+.field-pair > .wide { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
 .unit { display: flex; align-items: center; gap: 8px; }
 .unit input { width: 84px; flex: none; }
 .unit span { color: var(--muted); font-size: 0.87rem; }

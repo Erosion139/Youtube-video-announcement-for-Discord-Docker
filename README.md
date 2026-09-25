@@ -1,4 +1,4 @@
-# YouTube → Discord Notifier (this is built with claude by the way if you couldn't tell)
+# YouTube → Discord Notifier
 
 A small Docker app that watches YouTube channels and posts each new upload to Discord through your own bot. Everything is set up from a web page on port **25599**: the bot token, the Discord channel to post in, and the list of YouTube channels, each with its own on/off switch and optional message (for example, `Duckman uploaded a video! QUACK!`).
 
@@ -9,6 +9,30 @@ The app reads each channel's public YouTube feed on a schedule you choose (every
 It can also receive **instant notifications**: YouTube pushes new uploads to the app within seconds through WebSub (PubSubHubbub). This only works when YouTube can reach the app from the internet; see [Instant notifications](#instant-notifications). The scheduled check keeps running either way, so nothing is missed if a push never arrives.
 
 When you add a channel, the videos already on it are recorded silently. Only uploads that appear after that are announced, and each video is posted once.
+
+---
+
+## 1. Publish the image from your GitHub account
+
+This repository contains a GitHub Actions workflow that builds the Docker image and publishes it to the GitHub Container Registry each time you push to `main`.
+
+1. On GitHub, create a new repository named `yt-discord-notifier`. Leave it empty (no README or license). Public is simplest; see step 4 if you make it private.
+2. Push these files to it from the folder that contains this README:
+
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit"
+   git branch -M main
+   git remote add origin https://github.com/YOUR_GITHUB_USERNAME/yt-discord-notifier.git
+   git push -u origin main
+   ```
+
+   If you would rather upload through the GitHub website, make sure the hidden `.github/workflows/docker-publish.yml` file comes along; without it nothing gets built. If it goes missing, use **Add file → Create new file**, type `.github/workflows/docker-publish.yml` as the name, and paste its contents.
+3. Open the **Actions** tab. The "Build and publish Docker image" run takes a few minutes. When it turns green, the image is at `ghcr.io/YOUR_GITHUB_USERNAME/yt-discord-notifier:latest`, built for both `amd64` and `arm64`.
+4. On your GitHub profile, open **Packages → yt-discord-notifier → Package settings**. If the visibility is Private, change it to Public so TrueNAS can download it without a login. (To keep it private instead, create a GitHub personal access token with the `read:packages` scope and add it in TrueNAS under **Apps → Configuration → Manage Container Image Registries** for `ghcr.io`.)
+
+To release a numbered version as well as `latest`, push a tag such as `v1.0.0`.
 
 ## 2. Install on TrueNAS SCALE
 
@@ -23,6 +47,10 @@ These steps are for TrueNAS SCALE 24.10 (Electric Eel) or newer, which runs apps
 To require a login for the web page, uncomment `ADMIN_PASSWORD` in the YAML and set a password. The username is `admin`.
 
 If you prefer the **Custom App** form over YAML, the settings are: image `ghcr.io/YOUR_GITHUB_USERNAME/yt-discord-notifier`, tag `latest`, port `25599` → `25599`, a host-path volume from your dataset to `/data`, and user/group `568`.
+
+### Updating
+
+Push your changes to GitHub and wait for the Actions run to finish. TrueNAS then offers an update for the app, which pulls the new `latest` image. Your settings live in the dataset and are kept.
 
 ## 3. First-time setup in the web interface
 
@@ -49,6 +77,9 @@ Turning a channel off and back on doesn't flood Discord with what was uploaded i
 
 - **Check every**: how often each feed is read, in minutes.
 - **Skip videos older than**: videos published longer ago than this are never announced, for example when a creator makes an old video public. Set to 0 to turn this off.
+- **Wait between channels**: channels are checked one at a time, and this is the pause between one request and the next (5 seconds by default). YouTube throttles bursts of requests from a single address, and when it does it answers 404 or 500 for channels that are perfectly fine. Raising this to 15 or 30 seconds makes that far less likely. The panel shows how long a full pass takes at the current setting.
+
+Requests also carry the previous response's `ETag`, so a feed with nothing new costs a small "not modified" reply rather than a full download. A channel is only reported as broken after three failed checks in a row, so a single hiccup doesn't light up the list.
 
 ## Instant notifications
 
@@ -78,4 +109,5 @@ Everything else is configured in the web interface.
 - **TrueNAS can't pull the image**: the package is still private (see step 1.4), or the username in the image name isn't lowercase.
 - **"Missing Access" or "Missing Permissions" when posting**: the bot can't see or post in that Discord channel. Check the channel's permission overrides for the bot's role.
 - **A channel shows an error**: the message next to it explains what failed. The app retries on every check, and a video whose post failed is retried until it goes through.
+- **Several channels show 404 or HTTP 500 at once**: that is YouTube throttling, not the channels being gone. It usually follows adding a batch of channels, since each one is looked up as it's added. Raise **Wait between channels** to 15–30 seconds and leave it for one cycle; the errors clear themselves on the next successful check.
 - The **Activity** panel and the container logs show every check, post and error.

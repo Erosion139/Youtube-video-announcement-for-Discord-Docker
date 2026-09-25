@@ -10,7 +10,7 @@ import html
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 from xml.etree.ElementTree import ParseError
@@ -34,9 +34,28 @@ PAGE_HEADERS = {
     "Cookie": "SOCS=CAI; CONSENT=YES+cb",
 }
 
+FEED_HEADERS = {
+    "Accept": "application/atom+xml, application/xml;q=0.9, */*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 class YouTubeError(Exception):
     """A problem talking to YouTube, with a message fit to show the user."""
+
+
+class TransientError(YouTubeError):
+    """A failure that is usually temporary: rate limiting, a hiccup, a timeout.
+
+    YouTube's feed endpoint is not consistent about how it refuses a request. Under
+    load or rate limiting it answers 404, 429 or 5xx more or less interchangeably,
+    and the same channel succeeds moments later. Callers should retry these rather
+    than show them, and only report a channel as broken after several failures.
+    """
+
+    def __init__(self, message: str, retry_after: float = 0.0):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 @dataclass
@@ -56,6 +75,16 @@ class ChannelInfo:
     name: str = ""
     handle: str = ""
     thumbnail: str = ""
+
+
+@dataclass
+class FeedResult:
+    """One feed read. `unchanged` means YouTube answered 304 and sent no body."""
+    title: str = ""
+    videos: list[Video] = field(default_factory=list)
+    etag: str = ""
+    modified: str = ""
+    unchanged: bool = False
 
 
 def parse_timestamp(value: str | None) -> float:
@@ -109,24 +138,62 @@ def parse_feed(xml_text: str | bytes) -> tuple[str, list[Video]]:
     return feed_title, videos
 
 
-async def fetch_feed(session: aiohttp.ClientSession, channel_id: str) -> tuple[str, list[Video]]:
-    url = FEED_URL.format(channel_id)
+def _retry_after(resp) -> float:
     try:
-        async with session.get(url) as resp:
+        return max(0.0, min(300.0, float(resp.headers.get("Retry-After", "0"))))
+    except ValueError:
+        return 0.0
+
+
+async def fetch_feed(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+    *,
+    etag: str = "",
+    modified: str = "",
+) -> FeedResult:
+    """Read a channel's upload feed.
+
+    Passing the `etag`/`modified` from the previous read turns this into a
+    conditional request: if nothing has been uploaded since, YouTube answers 304
+    with no body, which is far cheaper and much less likely to trip rate limiting.
+    """
+    url = FEED_URL.format(channel_id)
+    headers = dict(FEED_HEADERS)
+    if etag:
+        headers["If-None-Match"] = etag
+    if modified:
+        headers["If-Modified-Since"] = modified
+
+    try:
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 304:
+                return FeedResult(etag=etag, modified=modified, unchanged=True)
             if resp.status == 404:
-                raise YouTubeError("YouTube has no feed for this channel (404). It may have been deleted.")
+                # Not necessarily gone: YouTube also answers 404 when it is
+                # throttling, and for channels that have never uploaded.
+                raise TransientError("YouTube didn't return a feed for this channel (404).")
+            if resp.status == 429:
+                raise TransientError(
+                    "YouTube is rate limiting these requests (429).", _retry_after(resp)
+                )
             if resp.status != 200:
-                raise YouTubeError(f"YouTube feed returned HTTP {resp.status}; will retry next check.")
+                raise TransientError(
+                    f"YouTube feed returned HTTP {resp.status}.", _retry_after(resp)
+                )
             text = await resp.text()
+            new_etag = resp.headers.get("ETag", "")
+            new_modified = resp.headers.get("Last-Modified", "")
     except aiohttp.ClientError as exc:
-        raise YouTubeError(f"Couldn't reach YouTube: {exc}") from exc
+        raise TransientError(f"Couldn't reach YouTube: {exc}") from exc
     except asyncio.TimeoutError as exc:
-        raise YouTubeError("YouTube took too long to respond; will retry next check.") from exc
+        raise TransientError("YouTube took too long to respond.") from exc
+
     title, videos = parse_feed(text)
     for video in videos:
         if not video.channel_id:
             video.channel_id = channel_id
-    return title, videos
+    return FeedResult(title=title, videos=videos, etag=new_etag, modified=new_modified)
 
 
 async def is_short(session: aiohttp.ClientSession, video_id: str) -> bool | None:
@@ -299,10 +366,10 @@ async def resolve_channel(session: aiohttp.ClientSession, query: str, api_key: s
 
     # The feed title is the authoritative channel name, and proves the channel exists.
     try:
-        feed_title, _ = await fetch_feed(session, info.channel_id)
+        feed = await fetch_feed(session, info.channel_id)
         confirmed = True
-        if feed_title:
-            info.name = feed_title
+        if feed.title:
+            info.name = feed.title
     except YouTubeError as exc:
         log.warning("Feed check for %s failed during lookup: %s", info.channel_id, exc)
     if not confirmed:

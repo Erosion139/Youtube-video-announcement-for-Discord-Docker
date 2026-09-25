@@ -1,9 +1,8 @@
 # For TrueNAS SCALE: Apps > Discover Apps > ⋮ > Install via YAML, then paste this.
-# Replace YOUR_GITHUB_USERNAME and the dataset path first.
+# The image is named after this repository. Replace the dataset path below first.
 services:
   yt-discord-notifier:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/yt-discord-notifier:latest
-    container_name: yt-discord-notifier
+    image: ghcr.io/erosion139/youtube-video-announcement-for-discord-docker:latest
     restart: unless-stopped
     ports:
       - "25599:25599"

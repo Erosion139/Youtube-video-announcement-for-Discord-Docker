@@ -1,17 +1,29 @@
 """Detect new uploads (by polling feeds or from WebSub pushes) and post them to Discord."""
 import asyncio
 import logging
+import random
 import re
 import time
 
 from . import youtube
 from .discord_bot import describe_error
-from .youtube import Video, YouTubeError
+from .youtube import TransientError, Video, YouTubeError
 
 log = logging.getLogger(__name__)
 
 PLACEHOLDER_RE = re.compile(r"\{(channel|title|url)\}")
 DISCORD_LIMIT = 2000
+
+# YouTube's feed endpoint fails intermittently for channels that are perfectly
+# fine, so a channel is only reported as broken after this many failures in a row.
+FAIL_BEFORE_REPORT = 3
+
+
+def jitter(seconds: float, spread: float = 0.25) -> float:
+    """Vary a delay a little so requests don't fall into a fixed rhythm."""
+    if seconds <= 0:
+        return 0.0
+    return seconds * random.uniform(1 - spread, 1 + spread)
 
 
 def build_message(template: str, channel: str, title: str, url: str) -> str:
@@ -51,6 +63,13 @@ class Notifier:
             return max(60, int(self.db.get_setting("poll_interval")))
         except ValueError:
             return 300
+
+    def request_gap(self) -> float:
+        """Seconds to wait between one channel's feed request and the next."""
+        try:
+            return max(0.0, min(300.0, float(self.db.get_setting("request_gap"))))
+        except (TypeError, ValueError):
+            return 5.0
 
     def target_for(self, channel: dict, settings: dict) -> str:
         return (channel.get("discord_channel_id") or settings.get("discord_channel_id") or "").strip()
@@ -114,7 +133,14 @@ class Notifier:
                 where = await self.bot.send(target, self.message_for(channel, settings, video))
             except Exception as exc:
                 reason = describe_error(exc).rstrip(".") + "."
-                self.db.update_channel(channel["id"], last_error=f"Couldn't post: {reason}")
+                # Forget the cached feed validators, so the retry on the next check
+                # re-reads the feed in full instead of being told "nothing changed".
+                self.db.update_channel(
+                    channel["id"],
+                    last_error=f"Couldn't post: {reason}",
+                    feed_etag="",
+                    feed_modified="",
+                )
                 if video.video_id not in self._failure_logged:
                     self._failure_logged.add(video.video_id)
                     self.activity.error(
@@ -130,17 +156,53 @@ class Notifier:
             self.activity.success(f"Posted “{video.title}” from {channel['name']} to {where} ({via})")
             return "posted"
 
-    async def check_channel(self, channel: dict) -> dict:
+    def _record_failure(self, channel: dict, message: str, retry_after: float = 0.0) -> dict:
+        """Count a failed check. Only complain once it has happened repeatedly."""
+        fails = (channel.get("fail_count") or 0) + 1
+        updates = {"last_checked": time.time(), "fail_count": fails}
+        if fails >= FAIL_BEFORE_REPORT:
+            detail = message
+            if "(404)" in message:
+                detail += " It may have been deleted, renamed or made private."
+            updates["last_error"] = f"{detail} Failed {fails} checks in a row."
+            if fails == FAIL_BEFORE_REPORT:
+                self.activity.warn(f"{channel['name']}: {detail}")
+        self.db.update_channel(channel["id"], **updates)
+        log.info("Feed check for %s failed (%d in a row): %s", channel.get("name"), fails, message)
+        return {"posted": 0, "error": message, "failures": fails, "retry_after": retry_after}
+
+    async def check_channel(self, channel: dict, *, retry: bool = True) -> dict:
         """Read one channel's feed and post anything new."""
         try:
-            feed_title, videos = await youtube.fetch_feed(self.session, channel["yt_channel_id"])
+            feed = await youtube.fetch_feed(
+                self.session,
+                channel["yt_channel_id"],
+                etag=channel.get("feed_etag") or "",
+                modified=channel.get("feed_modified") or "",
+            )
+        except TransientError as exc:
+            if retry:
+                # These usually clear on their own, so pause and try once more
+                # before holding it against the channel.
+                await asyncio.sleep(jitter(max(4.0, exc.retry_after)))
+                fresh = self.db.get_channel(channel["id"]) or channel
+                return await self.check_channel(fresh, retry=False)
+            return self._record_failure(channel, str(exc), exc.retry_after)
         except YouTubeError as exc:
-            self.db.update_channel(channel["id"], last_checked=time.time(), last_error=str(exc))
-            return {"posted": 0, "error": str(exc)}
+            return self._record_failure(channel, str(exc))
 
-        updates = {"last_checked": time.time()}
-        if feed_title and feed_title != channel["name"]:
-            updates["name"] = feed_title
+        updates = {"last_checked": time.time(), "fail_count": 0, "last_error": ""}
+        if feed.etag or feed.modified:
+            updates["feed_etag"] = feed.etag
+            updates["feed_modified"] = feed.modified
+        if feed.unchanged:
+            # YouTube answered "nothing new since last time" without sending a body.
+            self.db.update_channel(channel["id"], **updates)
+            return {"posted": 0, "unchanged": True}
+
+        videos = feed.videos
+        if feed.title and feed.title != channel["name"]:
+            updates["name"] = feed.title
         self.db.update_channel(channel["id"], **updates)
         channel = {**channel, **updates}
 
@@ -167,21 +229,31 @@ class Notifier:
         return {"posted": posted, "failed": failed}
 
     async def poll_all(self):
+        """Check every enabled channel, one at a time, spaced out.
+
+        Checking them all at once is what gets a home IP throttled: YouTube then
+        answers 404 or 500 for channels that are perfectly healthy. Going through
+        them in single file with a gap in between keeps the request rate low
+        enough that this doesn't happen.
+        """
         if self.polling:
             return
         self.polling = True
         try:
             channels = [c for c in self.db.list_channels() if c["enabled"]]
-            semaphore = asyncio.Semaphore(4)
-
-            async def one(channel):
-                async with semaphore:
-                    try:
-                        await self.check_channel(channel)
-                    except Exception:
-                        log.exception("Checking %s failed", channel.get("name"))
-
-            await asyncio.gather(*(one(c) for c in channels))
+            gap = self.request_gap()
+            for index, channel in enumerate(channels):
+                if index:
+                    await asyncio.sleep(jitter(gap))
+                try:
+                    result = await self.check_channel(channel)
+                except Exception:
+                    log.exception("Checking %s failed", channel.get("name"))
+                    continue
+                # If YouTube explicitly asked us to slow down, do as we're told.
+                pause = result.get("retry_after") or 0
+                if pause:
+                    await asyncio.sleep(min(pause, 120))
             self.last_poll = time.time()
         finally:
             self.polling = False
@@ -189,14 +261,17 @@ class Notifier:
     async def run(self):
         await asyncio.sleep(5)  # let the Discord bot connect first
         while True:
+            started = time.time()
             try:
                 await self.poll_all()
             except Exception:
                 log.exception("Feed check failed")
-            interval = self.poll_interval()
-            self.next_poll = time.time() + interval
+            # A pass now takes real time, so count it towards the interval rather
+            # than adding to it. Never less than 30s, however long the pass took.
+            delay = max(30.0, self.poll_interval() - (time.time() - started))
+            self.next_poll = time.time() + delay
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=interval)
+                await asyncio.wait_for(self._wake.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
@@ -204,10 +279,10 @@ class Notifier:
     # ---- manual actions -------------------------------------------------
     async def test_post(self, channel: dict) -> str:
         """Post the channel's latest video with its message, without touching history."""
-        _, videos = await youtube.fetch_feed(self.session, channel["yt_channel_id"])
-        if not videos:
+        feed = await youtube.fetch_feed(self.session, channel["yt_channel_id"])
+        if not feed.videos:
             raise ValueError("this channel has no public videos to test with.")
-        video = max(videos, key=lambda v: v.published)
+        video = max(feed.videos, key=lambda v: v.published)
         settings = self.db.get_settings()
         target = self.target_for(channel, settings)
         if not target:
